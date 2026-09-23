@@ -1,3 +1,4 @@
+import os
 import asyncio
 from logging.config import fileConfig
 
@@ -16,8 +17,13 @@ if config.config_file_name is not None:
 
 target_metadata = Base.metadata
 
+def get_database_url() -> str:
+    # Explicitly check for the OS environment variable injected by Docker Compose first,
+    # then fallback to the Pydantic settings.
+    return os.environ.get("DATABASE_URL") or settings.database_url
+
 def run_migrations_offline() -> None:
-    url = settings.database_url
+    url = get_database_url()
     context.configure(
         url=url,
         target_metadata=target_metadata,
@@ -35,7 +41,7 @@ def do_run_migrations(connection):
 
 async def run_async_migrations() -> None:
     configuration = config.get_section(config.config_ini_section, {})
-    configuration["sqlalchemy.url"] = settings.database_url
+    configuration["sqlalchemy.url"] = get_database_url()
     
     connectable = async_engine_from_config(
         configuration,

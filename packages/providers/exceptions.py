@@ -1,15 +1,26 @@
 class ProviderError(Exception):
     """Base exception for all AI provider errors."""
-    pass
+
+
+class ProviderAPIError(ProviderError):
+    """Raised when a provider accepts the connection but rejects a request."""
+
+    def __init__(self, message: str, status_code: int):
+        super().__init__(message)
+        self.status_code = status_code
+
 
 class ProviderConnectionError(ProviderError):
     """Raised when the provider API is unreachable."""
-    pass
+
 
 class ProviderTimeoutError(ProviderError):
     """Raised when the provider takes too long to respond."""
-    pass
 
-class ProviderAuthenticationError(ProviderError):
+
+class ProviderAuthenticationError(ProviderAPIError):
     """Raised for invalid API keys."""
-    pass
+
+
+class ProviderRateLimitError(ProviderAPIError):
+    """Raised for quota, credit, or request-rate limits."""

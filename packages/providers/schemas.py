@@ -6,7 +6,8 @@ class Message(BaseModel):
     content: str
 
 class ChatRequest(BaseModel):
-    model: str
+    # New chats use OpenRouter's free router until the client selects a model.
+    model: str = "openrouter/free"
     messages: List[Message]
     temperature: float = 0.7
     stream: bool = False

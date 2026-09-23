@@ -54,5 +54,6 @@ class ConversationService:
             )
             session.add(new_message)
             
-        # Commit the transaction safely
-        await session.commit()
+        # The request-scoped database dependency commits after the workflow also
+        # updates its run record. This keeps the conversation and run atomic.
+        await session.flush()

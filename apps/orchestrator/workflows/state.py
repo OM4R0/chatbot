@@ -16,6 +16,7 @@ class OrchestratorState(TypedDict):
     
     # Execution details
     selected_provider: Optional[str]
+    selected_model: Optional[str]
     provider_response: Optional[ChatResponse]
     
     # Guardrails and workflow control

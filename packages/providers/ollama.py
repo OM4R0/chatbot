@@ -1,23 +1,36 @@
-import httpx
 import json
 import uuid
 from typing import List, AsyncGenerator
 
+import httpx
+
 from .base import AIProvider
 from .schemas import ChatRequest, ChatResponse, ProviderModel
-from .exceptions import ProviderConnectionError, ProviderTimeoutError
+from .exceptions import ProviderAPIError, ProviderConnectionError, ProviderTimeoutError
 
 class OllamaProvider(AIProvider):
-    def __init__(self, base_url: str = "http://localhost:11434"):
+    def __init__(self, base_url: str = "http://localhost:11434", timeout: float = 120.0):
         self.client = httpx.AsyncClient(
             base_url=base_url,
-            timeout=httpx.Timeout(120.0) # Local models might need more time
+            timeout=httpx.Timeout(timeout),
+        )
+
+    @staticmethod
+    def _api_error(response: httpx.Response) -> ProviderAPIError:
+        try:
+            detail = response.json().get("error")
+        except (ValueError, AttributeError):
+            detail = None
+        detail = detail or response.text or response.reason_phrase
+        return ProviderAPIError(
+            f"Ollama API error ({response.status_code}): {detail}", response.status_code
         )
 
     async def list_models(self) -> List[ProviderModel]:
         try:
             response = await self.client.get("/api/tags")
-            response.raise_for_status()
+            if response.is_error:
+                raise self._api_error(response)
             data = response.json()
             return [
                 ProviderModel(id=m["name"], owned_by="ollama") 
@@ -38,7 +51,8 @@ class OllamaProvider(AIProvider):
         
         try:
             response = await self.client.post("/api/chat", json=payload)
-            response.raise_for_status()
+            if response.is_error:
+                raise self._api_error(response)
             data = response.json()
             
             return ChatResponse(
@@ -51,7 +65,7 @@ class OllamaProvider(AIProvider):
         except httpx.TimeoutException:
             raise ProviderTimeoutError("Ollama timeout during completion.")
         except httpx.RequestError as e:
-            raise ProviderConnectionError(f"Ollama error: {e}")
+            raise ProviderConnectionError(f"Ollama connection error: {e}")
 
     async def stream(self, request: ChatRequest) -> AsyncGenerator[str, None]:
         payload = {
@@ -63,7 +77,9 @@ class OllamaProvider(AIProvider):
         
         try:
             async with self.client.stream("POST", "/api/chat", json=payload) as response:
-                response.raise_for_status()
+                if response.is_error:
+                    await response.aread()
+                    raise self._api_error(response)
                 async for line in response.aiter_lines():
                     if line.strip():
                         chunk = json.loads(line)
@@ -71,6 +87,8 @@ class OllamaProvider(AIProvider):
                             yield chunk["message"]["content"]
         except httpx.TimeoutException:
             raise ProviderTimeoutError("Ollama timeout during stream.")
+        except httpx.RequestError as e:
+            raise ProviderConnectionError(f"Ollama connection error: {e}")
 
     async def close(self):
         await self.client.aclose()

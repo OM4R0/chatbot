@@ -32,23 +32,31 @@ class TrackingService:
         status: RunStatus,
         prompt_tokens: Optional[int] = None,
         completion_tokens: Optional[int] = None,
-        error_message: Optional[str] = None
+        error_message: Optional[str] = None,
+        provider: Optional[str] = None,
+        model_name: Optional[str] = None,
     ) -> None:
         """Update the existing run with final status and token usage."""
         total_tokens = None
         if prompt_tokens is not None and completion_tokens is not None:
             total_tokens = prompt_tokens + completion_tokens
 
+        values: dict[str, Any] = {
+            "status": status,
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "total_tokens": total_tokens,
+            "error_message": error_message,
+        }
+        if provider is not None:
+            values["provider"] = provider
+        if model_name is not None:
+            values["model_name"] = model_name
+
         await session.execute(
             update(Run)
             .where(Run.id == run_id)
-            .values(
-                status=status,
-                prompt_tokens=prompt_tokens,
-                completion_tokens=completion_tokens,
-                total_tokens=total_tokens,
-                error_message=error_message
-            )
+            .values(**values)
         )
         await session.flush()
 
