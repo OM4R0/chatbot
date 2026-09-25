@@ -95,7 +95,12 @@ async def orchestrate_chat(
             model=provider_response.model,
             content=provider_response.content,
             prompt_tokens=provider_response.prompt_tokens,
-            completion_tokens=provider_response.completion_tokens
+            completion_tokens=provider_response.completion_tokens,
+            provider=provider_response.provider or final_state.get("selected_provider"),
+            fallback_from_model=(
+                provider_response.fallback_from_model
+                or final_state.get("fallback_from_model")
+            ),
         )
 
         return response

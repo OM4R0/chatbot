@@ -37,6 +37,13 @@ async def prepare_node(state: OrchestratorState, config: RunnableConfig) -> Dict
     conversation = await ConversationService.get_or_create_conversation(
         session, state["external_conversation_id"]
     )
+    stored_messages = await ConversationService.get_messages(session, conversation.id)
+    messages_to_persist = ConversationService.new_messages_since(
+        stored_messages, request.messages
+    )
+    request_with_history = request.model_copy(
+        update={"messages": [*stored_messages, *messages_to_persist]}
+    )
     
     provider = await model_service.resolve_provider(request.model)
     provider_name = model_service.provider_name(provider)
@@ -52,10 +59,12 @@ async def prepare_node(state: OrchestratorState, config: RunnableConfig) -> Dict
         "conversation_id": conversation.id,
         "run_id": run.id,
         "selected_provider": provider_name,
+        "request": request_with_history,
+        "messages_to_persist": messages_to_persist,
     }
 
 async def execute_node(state: OrchestratorState, config: RunnableConfig) -> Dict[str, Any]:
-    """Call the free OpenRouter path, then automatically fail over to Ollama."""
+    """Call OpenRouter, then automatically fail over to Ollama on any error."""
     request = state["request"]
     session = config["configurable"]["session"]
     run_id = state["run_id"]
@@ -81,6 +90,17 @@ async def execute_node(state: OrchestratorState, config: RunnableConfig) -> Dict
             fallback_request = model_service.request_for(ollama_provider, request)
             fallback_request.model = model_service.fallback_model
             response = await ollama_provider.complete(fallback_request)
+            response = response.model_copy(
+                update={
+                    "content": (
+                        "⚠️ OpenRouter could not serve the selected model. "
+                        f"This response was generated locally by Ollama ({response.model}).\n\n"
+                        f"{response.content}"
+                    ),
+                    "provider": "ollama",
+                    "fallback_from_model": request.model,
+                }
+            )
             await TrackingService.log_audit(
                 session=session,
                 request_id=state["request_id"],
@@ -98,6 +118,7 @@ async def execute_node(state: OrchestratorState, config: RunnableConfig) -> Dict
                 "provider_response": response,
                 "selected_provider": "ollama",
                 "selected_model": response.model,
+                "fallback_from_model": request.model,
             }
         except Exception as fallback_error:
             error_msg = f"All providers failed. Ollama: {fallback_error}. OpenRouter: {primary_error}"
@@ -138,7 +159,7 @@ async def output_node(state: OrchestratorState, config: RunnableConfig) -> Dict[
         session,
         state["conversation_id"],
         [
-            *state["request"].messages,
+            *state.get("messages_to_persist", state["request"].messages),
             ProviderMessage(role="assistant", content=response.content),
         ],
     )

@@ -1,12 +1,13 @@
-from typing import TypedDict, Optional
+from typing import List, TypedDict, Optional
 import uuid
-from packages.providers.schemas import ChatRequest, ChatResponse
+from packages.providers.schemas import ChatRequest, ChatResponse, Message
 
 class OrchestratorState(TypedDict):
     """Task 22: Define orchestration state for LangGraph nodes."""
     
     # Input data
     request: ChatRequest
+    messages_to_persist: List[Message]
     request_id: str
     external_conversation_id: Optional[str]
     
@@ -17,6 +18,7 @@ class OrchestratorState(TypedDict):
     # Execution details
     selected_provider: Optional[str]
     selected_model: Optional[str]
+    fallback_from_model: Optional[str]
     provider_response: Optional[ChatResponse]
     
     # Guardrails and workflow control

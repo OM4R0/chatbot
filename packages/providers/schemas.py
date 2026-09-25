@@ -18,6 +18,8 @@ class ChatResponse(BaseModel):
     content: str
     prompt_tokens: int = 0
     completion_tokens: int = 0
+    provider: str | None = None
+    fallback_from_model: str | None = None
 
 class ProviderModel(BaseModel):
     id: str

@@ -1,4 +1,5 @@
 import httpx
+import hashlib
 import json
 import time
 from contextlib import asynccontextmanager
@@ -8,6 +9,39 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from apps.core.config import settings
 
 http_client = None
+
+
+def build_external_conversation_id(
+    body: dict, headers, client_host: str | None = None
+) -> str | None:
+    """Preserve a conversation when an OpenAI-compatible client omits its ID."""
+    for header in ("x-open-webui-chat-id", "x-conversation-id", "x-chat-id"):
+        value = headers.get(header)
+        if value:
+            return value
+
+    # Open WebUI sends user identity headers but not necessarily a chat ID to
+    # external OpenAI-compatible connections. The first user message is stable
+    # for the life of a chat, so a hash gives the database a safe stable key
+    # without storing that text as an identifier.
+    identity = headers.get("x-open-webui-user-id") or body.get("user") or client_host
+    first_user_message = next(
+        (
+            message.get("content")
+            for message in body.get("messages", [])
+            if isinstance(message, dict) and message.get("role") == "user"
+        ),
+        None,
+    )
+    if not identity or first_user_message is None:
+        return None
+
+    source = json.dumps(
+        {"identity": str(identity), "first_user_message": first_user_message},
+        sort_keys=True,
+        ensure_ascii=False,
+    )
+    return "derived:" + hashlib.sha256(source.encode("utf-8")).hexdigest()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -55,9 +89,11 @@ async def chat_completions(request: Request):
         raise HTTPException(status_code=400, detail="Invalid JSON body")
 
     headers_to_forward = {}
-    chat_id = request.headers.get("x-open-webui-chat-id")
-    if chat_id:
-        headers_to_forward["x-external-conversation-id"] = chat_id
+    conversation_id = build_external_conversation_id(
+        body, request.headers, request.client.host if request.client else None
+    )
+    if conversation_id:
+        headers_to_forward["x-external-conversation-id"] = conversation_id
 
     user_id = request.headers.get("x-open-webui-user-id")
     if user_id:
@@ -93,6 +129,10 @@ async def chat_completions(request: Request):
         response_id = f"chatcmpl-{data.get('id', '')}"
         created = int(time.time())
         model = data.get("model", body.get("model", ""))
+        provider = data.get("provider", "unknown")
+        response_headers = {"X-AI-Provider": provider}
+        if data.get("fallback_from_model"):
+            response_headers["X-AI-Fallback-From"] = data["fallback_from_model"]
 
         if is_stream:
             async def generate():
@@ -121,7 +161,11 @@ async def chat_completions(request: Request):
             return StreamingResponse(
                 generate(),
                 media_type="text/event-stream",
-                headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+                headers={
+                    "Cache-Control": "no-cache",
+                    "X-Accel-Buffering": "no",
+                    **response_headers,
+                },
             )
 
         openai_response = {
@@ -142,7 +186,7 @@ async def chat_completions(request: Request):
                 "total_tokens": data.get("prompt_tokens", 0) + data.get("completion_tokens", 0),
             },
         }
-        return JSONResponse(content=openai_response)
+        return JSONResponse(content=openai_response, headers=response_headers)
 
     except httpx.ConnectError:
         raise HTTPException(status_code=503, detail="Orchestrator is unavailable")
